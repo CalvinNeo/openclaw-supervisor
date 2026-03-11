@@ -1,0 +1,33 @@
+[package]
+name = "openclaw-supervisor"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "openclaw-supervisor"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+serde = { workspace = true }
+serde_json = "1.0"
+serde_yaml = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+notify = { workspace = true }
+hickory-resolver = { workspace = true }
+chrono = { workspace = true }
+ipnetwork = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true }
+aya-log = { workspace = true }
+openclaw-supervisor-common = { path = "../openclaw-supervisor-common", features = ["user"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+openclaw-supervisor-common = { path = "../openclaw-supervisor-common" }

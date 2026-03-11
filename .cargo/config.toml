@@ -1,0 +1,12 @@
+[alias]
+xtask = "run --package xtask --"
+
+[build]
+target-dir = "target"
+
+[target.bpfel-unknown-none]
+rustflags = ["-C", "link-arg=--btf"]
+
+# Build eBPF with specific settings
+[env]
+RUST_BACKTRACE = "1"

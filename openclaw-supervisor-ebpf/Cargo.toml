@@ -1,0 +1,13 @@
+[package]
+name = "openclaw-supervisor-ebpf"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+openclaw-supervisor-common = { path = "../openclaw-supervisor-common" }
+
+[[bin]]
+name = "openclaw-supervisor-ebpf"
+path = "src/main.rs"

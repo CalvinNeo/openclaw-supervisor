@@ -1,0 +1,14 @@
+[package]
+name = "openclaw-supervisor-common"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+user = ["serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true, optional = true }

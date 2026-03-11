@@ -1,0 +1,40 @@
+# OpenClaw Supervisor Configuration Example
+# Supports multiple containers with independent policies
+
+containers:
+  - id: "abc123"  # Container ID, daemon auto-resolves to cgroup
+    network:
+      mode: allowlist  # allowlist | denylist
+      rules:
+        - domain: "*.openai.com"
+          ports: [443]
+        - domain: "api.anthropic.com"
+          ports: [443]
+        - ip: "192.168.1.0/24"
+          ports: [80, 443]
+    filesystem:
+      mode: allowlist
+      rules:
+        - path: "/data"
+          permission: rw
+        - path: "/data/scripts"
+          permission: r
+          deny_extensions: [".sh", ".py"]
+        - path: "/tmp"
+          permission: rw
+
+  - id: "def456"
+    network:
+      mode: denylist
+      rules:
+        - ip: "0.0.0.0/0"  # Deny all external network
+    filesystem:
+      mode: allowlist
+      rules:
+        - path: "/"
+          permission: r
+
+audit:
+  enabled: true
+  log_path: "/var/log/openclaw-supervisor.log"
+  log_format: json  # json | text
