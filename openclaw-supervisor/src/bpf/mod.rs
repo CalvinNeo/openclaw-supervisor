@@ -36,8 +36,10 @@ pub enum BpfEvent {
 #[cfg(target_os = "linux")]
 mod linux_impl {
     use super::*;
-    use aya::maps::{HashMap, RingBuf};
+    use aya::maps::{HashMap, RingBuf, MapData};
+    use aya::programs::{CgroupSockAddr, Lsm};
     use aya::{Ebpf, EbpfLoader};
+    use std::os::unix::io::AsRawFd;
     use std::path::Path;
     use tokio::io::unix::AsyncFd;
     use openclaw_supervisor_common::NetworkRuleKey;
@@ -49,7 +51,7 @@ mod linux_impl {
         pub(crate) audit_logger: Option<AuditLogger>,
         pub(crate) cgroup_to_container: StdHashMap<u64, String>,
         pub(crate) container_to_cgroup: StdHashMap<String, u64>,
-        events_fd: Option<AsyncFd<RingBuf<&'static mut aya::maps::MapData>>>,
+        attached_cgroups: StdHashMap<u64, String>,
     }
 
     impl BpfManager {
@@ -57,7 +59,12 @@ mod linux_impl {
         pub async fn new(audit_logger: Option<AuditLogger>) -> Result<Self> {
             info!("Loading eBPF programs...");
 
-            let bpf = Self::load_bpf_programs().await?;
+            let mut bpf = Self::load_bpf_programs().await?;
+
+            // Attach LSM program for file control
+            if let Err(e) = Self::attach_lsm_programs(&mut bpf) {
+                warn!("Failed to attach LSM programs (may require kernel 5.7+): {}", e);
+            }
 
             let dns_resolver = DnsResolver::new()
                 .await
@@ -69,8 +76,18 @@ mod linux_impl {
                 audit_logger,
                 cgroup_to_container: StdHashMap::new(),
                 container_to_cgroup: StdHashMap::new(),
-                events_fd: None,
+                attached_cgroups: StdHashMap::new(),
             })
+        }
+
+        fn attach_lsm_programs(bpf: &mut Ebpf) -> Result<()> {
+            let program: &mut Lsm = bpf.program_mut("file_open")
+                .context("file_open program not found")?
+                .try_into()?;
+            program.load()?;
+            program.attach()?;
+            info!("LSM file_open program attached");
+            Ok(())
         }
 
         async fn load_bpf_programs() -> Result<Ebpf> {
@@ -120,7 +137,7 @@ mod linux_impl {
         async fn configure_container(&mut self, container: &ContainerConfig) -> Result<()> {
             info!("Configuring container: {}", container.id);
 
-            let cgroup_id = self
+            let (cgroup_id, cgroup_path) = self
                 .resolve_container_cgroup(&container.id)
                 .await
                 .with_context(|| format!("Failed to resolve cgroup for container {}", container.id))?;
@@ -129,6 +146,9 @@ mod linux_impl {
                 .insert(cgroup_id, container.id.clone());
             self.container_to_cgroup
                 .insert(container.id.clone(), cgroup_id);
+
+            // Attach cgroup socket programs for network control
+            self.attach_cgroup_programs(cgroup_id, &cgroup_path)?;
 
             self.add_tracked_cgroup(cgroup_id)?;
 
@@ -151,28 +171,72 @@ mod linux_impl {
             Ok(())
         }
 
-        async fn resolve_container_cgroup(&self, container_id: &str) -> Result<u64> {
+        fn attach_cgroup_programs(&mut self, cgroup_id: u64, cgroup_path: &str) -> Result<()> {
+            use std::fs::File;
+
+            if self.attached_cgroups.contains_key(&cgroup_id) {
+                debug!("Cgroup {} already attached", cgroup_id);
+                return Ok(());
+            }
+
+            let cgroup_file = File::open(cgroup_path)
+                .with_context(|| format!("Failed to open cgroup: {}", cgroup_path))?;
+
+            // Attach connect4 program
+            let prog: &mut CgroupSockAddr = self.bpf.program_mut("connect4")
+                .context("connect4 program not found")?
+                .try_into()?;
+            prog.load()?;
+            prog.attach(&cgroup_file)?;
+            info!("Attached connect4 to cgroup {}", cgroup_path);
+
+            // Attach connect6 program
+            let prog6: &mut CgroupSockAddr = self.bpf.program_mut("connect6")
+                .context("connect6 program not found")?
+                .try_into()?;
+            prog6.load()?;
+            prog6.attach(&cgroup_file)?;
+            info!("Attached connect6 to cgroup {}", cgroup_path);
+
+            self.attached_cgroups.insert(cgroup_id, cgroup_path.to_string());
+            Ok(())
+        }
+
+        async fn resolve_container_cgroup(&self, container_id: &str) -> Result<(u64, String)> {
+            // Try Docker cgroup paths (systemd)
             let docker_cgroup = format!(
                 "/sys/fs/cgroup/system.slice/docker-{}.scope",
                 container_id
             );
             if let Ok(id) = Self::get_cgroup_id(&docker_cgroup) {
-                return Ok(id);
+                return Ok((id, docker_cgroup));
             }
 
+            // Try containerd cgroup paths (systemd)
             let containerd_cgroup = format!(
                 "/sys/fs/cgroup/system.slice/containerd-{}.scope",
                 container_id
             );
             if let Ok(id) = Self::get_cgroup_id(&containerd_cgroup) {
-                return Ok(id);
+                return Ok((id, containerd_cgroup));
             }
 
+            // Try Docker cgroup v2 unified hierarchy
             let cgroup_v2 = format!("/sys/fs/cgroup/docker/{}", container_id);
             if let Ok(id) = Self::get_cgroup_id(&cgroup_v2) {
-                return Ok(id);
+                return Ok((id, cgroup_v2));
             }
 
+            // Try podman cgroup paths
+            let podman_cgroup = format!(
+                "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/user.slice/libpod-{}.scope",
+                container_id
+            );
+            if let Ok(id) = Self::get_cgroup_id(&podman_cgroup) {
+                return Ok((id, podman_cgroup));
+            }
+
+            // If short ID, try to expand to full ID
             if container_id.len() < 64 {
                 if let Some(full_id) = Self::find_full_container_id(container_id).await? {
                     return self.resolve_container_cgroup(&full_id).await;
@@ -236,7 +300,55 @@ mod linux_impl {
 
         /// Wait for and return the next event from eBPF
         pub async fn next_event(&mut self) -> Option<BpfEvent> {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            // Try to read from ring buffer
+            let mut ring_buf: RingBuf<&mut MapData> = match self.bpf.map_mut("EVENTS") {
+                Some(map) => match map.try_into() {
+                    Ok(rb) => rb,
+                    Err(_) => {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        return None;
+                    }
+                },
+                None => {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    return None;
+                }
+            };
+
+            // Poll for events
+            if let Some(item) = ring_buf.next() {
+                let data = item.as_ref();
+
+                // Determine event type from first 4 bytes
+                if data.len() >= 4 {
+                    let event_type = u32::from_ne_bytes([data[0], data[1], data[2], data[3]]);
+
+                    match event_type {
+                        1 | 2 => {
+                            // Network event
+                            if data.len() >= std::mem::size_of::<NetworkEvent>() {
+                                let event: NetworkEvent = unsafe {
+                                    std::ptr::read(data.as_ptr() as *const NetworkEvent)
+                                };
+                                return Some(BpfEvent::Network(event));
+                            }
+                        }
+                        3 | 4 => {
+                            // File event
+                            if data.len() >= std::mem::size_of::<FileEvent>() {
+                                let event: FileEvent = unsafe {
+                                    std::ptr::read(data.as_ptr() as *const FileEvent)
+                                };
+                                return Some(BpfEvent::File(event));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // No events available, wait a bit
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             None
         }
 

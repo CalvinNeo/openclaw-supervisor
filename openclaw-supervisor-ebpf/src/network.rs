@@ -8,7 +8,6 @@ use aya_ebpf::{
     macros::cgroup_sock_addr,
     programs::SockAddrContext,
 };
-use aya_log_ebpf::info;
 use openclaw_supervisor_common::{EventType, NetworkEvent, NetworkRuleKey, PolicyMode};
 
 use crate::{CONTAINER_POLICIES, EVENTS, NETWORK_ALLOWLIST, NETWORK_DENYLIST, TRACKED_CGROUPS};

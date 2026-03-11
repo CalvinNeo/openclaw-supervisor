@@ -73,14 +73,16 @@ fn add_filesystem_rule(
 }
 
 /// Create a hash key for file rules
+/// Must match the hash function in eBPF (hash_path_key)
 fn hash_file_rule_key(cgroup_id: u64, path: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    cgroup_id.hash(&mut hasher);
-    path.hash(&mut hasher);
-    hasher.finish()
+    let path_bytes = path.as_bytes();
+    let mut hash = cgroup_id;
+    // FNV-1a style hash matching eBPF implementation
+    for &byte in path_bytes.iter().take(MAX_PATH_LEN) {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn add_extension_deny_rule(

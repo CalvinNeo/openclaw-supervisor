@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = []
-user = ["serde"]
+user = ["dep:serde", "dep:aya"]
 
 [dependencies]
 serde = { workspace = true, optional = true }

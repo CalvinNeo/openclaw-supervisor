@@ -10,6 +10,13 @@ pub const MAX_PATH_LEN: usize = 256;
 /// Maximum extension length
 pub const MAX_EXT_LEN: usize = 16;
 
+// File open flags for no_std environments (matching libc values)
+pub const O_RDONLY: u32 = 0;
+pub const O_WRONLY: u32 = 1;
+pub const O_RDWR: u32 = 2;
+pub const O_CREAT: u32 = 0o100;
+pub const O_TRUNC: u32 = 0o1000;
+
 /// Event types for audit logging
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

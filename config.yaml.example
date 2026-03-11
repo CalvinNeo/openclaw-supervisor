@@ -1,40 +1,99 @@
 # OpenClaw Supervisor Configuration Example
 # Supports multiple containers with independent policies
 
+# ============================================================================
+# Container Policies
+# ============================================================================
 containers:
-  - id: "abc123"  # Container ID, daemon auto-resolves to cgroup
+  # Example 1: AI/LLM container with strict network allowlist
+  - id: "abc123"  # Container ID (short or full), auto-resolves to cgroup
     network:
       mode: allowlist  # allowlist | denylist
       rules:
+        # Allow connections to OpenAI API (wildcard domain)
         - domain: "*.openai.com"
           ports: [443]
+        # Allow connections to Anthropic API
         - domain: "api.anthropic.com"
           ports: [443]
+        # Allow local network access
         - ip: "192.168.1.0/24"
           ports: [80, 443]
+        # Allow DNS queries
+        - ip: "8.8.8.8/32"
+          ports: [53]
+        - ip: "8.8.4.4/32"
+          ports: [53]
     filesystem:
       mode: allowlist
       rules:
+        # Read-write access to data directory
         - path: "/data"
           permission: rw
+        # Read-only access to scripts (no execution of .sh/.py)
         - path: "/data/scripts"
           permission: r
-          deny_extensions: [".sh", ".py"]
+          deny_extensions: [".sh", ".py", ".bash"]
+        # Temp directory for working files
         - path: "/tmp"
           permission: rw
+        # Read-only system directories
+        - path: "/usr"
+          permission: r
+        - path: "/lib"
+          permission: r
 
+  # Example 2: Isolated container with no network access
   - id: "def456"
     network:
       mode: denylist
       rules:
-        - ip: "0.0.0.0/0"  # Deny all external network
+        # Block all network access (0.0.0.0/0 covers all IPs)
+        - ip: "0.0.0.0/0"
     filesystem:
       mode: allowlist
       rules:
+        # Read-only access to entire filesystem
         - path: "/"
           permission: r
+        # But allow writing to specific directory
+        - path: "/workspace"
+          permission: rw
 
+  # Example 3: Container with network denylist (block specific IPs)
+  - id: "ghi789"
+    network:
+      mode: denylist
+      rules:
+        # Block access to internal/sensitive networks
+        - ip: "10.0.0.0/8"
+        - ip: "172.16.0.0/12"
+        - ip: "169.254.0.0/16"  # Link-local
+    filesystem:
+      mode: denylist
+      rules:
+        # Block access to sensitive paths
+        - path: "/etc/shadow"
+          permission: r  # Deny read
+        - path: "/root"
+          permission: rw  # Deny all access
+
+# ============================================================================
+# Audit Logging Configuration
+# ============================================================================
 audit:
   enabled: true
   log_path: "/var/log/openclaw-supervisor.log"
+  # log_path: "-"  # Use "-" or "stdout" to log to stdout
   log_format: json  # json | text
+
+# ============================================================================
+# Notes
+# ============================================================================
+# - Container IDs can be short (12 char) or full (64 char)
+# - Daemon will auto-resolve container ID to cgroup path
+# - Supports Docker, containerd, and Podman containers
+# - Hot-reload: modify this file and changes apply automatically
+# - Network rules support CIDR notation (e.g., 192.168.1.0/24)
+# - Domain wildcards: *.example.com matches sub.example.com and example.com
+# - Filesystem permissions: r (read), w (write), rw (read-write)

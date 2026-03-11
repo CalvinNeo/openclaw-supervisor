@@ -298,4 +298,119 @@ audit:
         };
         assert_eq!(rule_r.permission_flags(), 1);
     }
+
+    #[test]
+    fn test_policy_mode_default() {
+        let yaml = r#"
+containers:
+  - id: "test"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.containers[0].network.mode, PolicyMode::Allowlist);
+        assert_eq!(config.containers[0].filesystem.mode, PolicyMode::Allowlist);
+    }
+
+    #[test]
+    fn test_denylist_mode() {
+        let yaml = r#"
+containers:
+  - id: "test"
+    network:
+      mode: denylist
+      rules:
+        - ip: "10.0.0.0/8"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.containers[0].network.mode, PolicyMode::Denylist);
+    }
+
+    #[test]
+    fn test_validation_duplicate_container_id() {
+        let yaml = r#"
+containers:
+  - id: "same"
+  - id: "same"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validation_invalid_ip() {
+        let yaml = r#"
+containers:
+  - id: "test"
+    network:
+      rules:
+        - ip: "invalid-ip"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validation_relative_path() {
+        let yaml = r#"
+containers:
+  - id: "test"
+    filesystem:
+      rules:
+        - path: "relative/path"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_container_ids() {
+        let yaml = r#"
+containers:
+  - id: "container1"
+  - id: "container2"
+  - id: "container3"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let ids = config.container_ids();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&"container1"));
+        assert!(ids.contains(&"container2"));
+        assert!(ids.contains(&"container3"));
+    }
+
+    #[test]
+    fn test_network_rule_ports() {
+        let domain_rule = NetworkRule::Domain {
+            domain: "example.com".to_string(),
+            ports: vec![80, 443],
+        };
+        assert_eq!(domain_rule.ports(), &[80, 443]);
+
+        let ip_rule = NetworkRule::Ip {
+            ip: "192.168.1.1/32".to_string(),
+            ports: vec![22],
+        };
+        assert_eq!(ip_rule.ports(), &[22]);
+    }
+
+    #[test]
+    fn test_audit_config_defaults() {
+        let config = AuditConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.log_format, LogFormat::Json);
+    }
+
+    #[test]
+    fn test_log_format_text() {
+        let yaml = r#"
+audit:
+  enabled: true
+  log_format: text
+"#;
+        #[derive(serde::Deserialize)]
+        struct TestConfig {
+            audit: AuditConfig,
+        }
+        let config: TestConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.audit.log_format, LogFormat::Text);
+    }
 }

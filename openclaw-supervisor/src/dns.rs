@@ -145,4 +145,39 @@ mod tests {
         assert!(DnsResolver::matches_pattern("api.openai.com", "api.openai.com"));
         assert!(!DnsResolver::matches_pattern("www.openai.com", "api.openai.com"));
     }
+
+    #[test]
+    fn test_deep_subdomain_matching() {
+        assert!(DnsResolver::matches_pattern("a.b.c.example.com", "*.example.com"));
+        assert!(DnsResolver::matches_pattern("deep.nested.sub.example.com", "*.example.com"));
+    }
+
+    #[test]
+    fn test_wildcard_edge_cases() {
+        // Empty pattern should not match
+        assert!(!DnsResolver::matches_pattern("example.com", "*."));
+
+        // Pattern without wildcard prefix
+        assert!(!DnsResolver::matches_pattern("api.example.com", "example.com"));
+
+        // Similar domain names that shouldn't match
+        assert!(!DnsResolver::matches_pattern("example.com.attacker.com", "*.example.com"));
+        assert!(!DnsResolver::matches_pattern("fakeexample.com", "*.example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_dns_resolver_creation() {
+        let resolver = DnsResolver::new().await;
+        assert!(resolver.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cache_operations() {
+        let resolver = DnsResolver::new().await.unwrap();
+        assert_eq!(resolver.cache_size().await, 0);
+
+        // After clearing an empty cache, size should still be 0
+        resolver.clear_cache().await;
+        assert_eq!(resolver.cache_size().await, 0);
+    }
 }
